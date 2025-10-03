@@ -34,6 +34,7 @@ from warnings import warn
 
 import numpy as np
 import pandas as pd
+import scipy.stats as sps
 
 import ambrosia.tools.empirical_tools as empirical_pkg
 import ambrosia.tools.pvalue_tools as pvalue_pkg
@@ -397,6 +398,72 @@ class Tester(ABToolAbstract):
                 sub_result = Tester.__binary_result(
                     a_values, b_values, np.array(args["alpha"]), effect_type=args["effect_type"], **kwargs
                 )
+            # Augment sub_result with per-group metric values and confidence intervals
+            alternative: str = kwargs.get("alternative", "two-sided")
+            alpha_vals: np.ndarray = np.array(args["alpha"]) if not isinstance(args["alpha"], np.ndarray) else args["alpha"]
+            # Group point estimates (mean / proportion)
+            group_a_value: float = float(np.mean(a_values))
+            group_b_value: float = float(np.mean(b_values))
+
+            # Compute CI for each group depending on method
+            if method == "empiric":
+                # Bootstrap CI for group means
+                bs_size: int = kwargs.get("bootstrap_size", BOOTSTRAP_SIZE)
+                bs_stat_a: np.ndarray = empirical_pkg.get_bs_stat(a_values, stat="mean", N=bs_size)
+                bs_stat_b: np.ndarray = empirical_pkg.get_bs_stat(b_values, stat="mean", N=bs_size)
+                corrected_alpha = pvalue_pkg.corrected_alpha(alpha_vals, alternative)
+                corrected_alpha = np.array([corrected_alpha]) if isinstance(corrected_alpha, float) else np.array(corrected_alpha)
+                left_a = np.quantile(bs_stat_a, q=corrected_alpha / 2)
+                right_a = np.quantile(bs_stat_a, q=1 - corrected_alpha / 2)
+                left_b = np.quantile(bs_stat_b, q=corrected_alpha / 2)
+                right_b = np.quantile(bs_stat_b, q=1 - corrected_alpha / 2)
+                left_a, right_a = pvalue_pkg.choose_from_bounds(left_a, right_a, alternative)
+                left_b, right_b = pvalue_pkg.choose_from_bounds(left_b, right_b, alternative)
+                group_a_ci = list(zip(left_a, right_a))
+                group_b_ci = list(zip(left_b, right_b))
+            elif method == "binary":
+                # Normal approximation CI for proportions with bounds [0,1]
+                p_a: float = group_a_value
+                p_b: float = group_b_value
+                n_a: int = len(a_values)
+                n_b: int = len(b_values)
+                corrected_alpha = pvalue_pkg.corrected_alpha(alpha_vals, alternative)
+                corrected_alpha = np.array([corrected_alpha]) if isinstance(corrected_alpha, float) else np.array(corrected_alpha)
+                z_vals = sps.norm.ppf(1 - corrected_alpha / 2)
+                se_a = np.sqrt(np.maximum(p_a * (1 - p_a), 0.0) / max(n_a, 1))
+                se_b = np.sqrt(np.maximum(p_b * (1 - p_b), 0.0) / max(n_b, 1))
+                # Ensure array shapes
+                left_a = p_a - z_vals * se_a
+                right_a = p_a + z_vals * se_a
+                left_b = p_b - z_vals * se_b
+                right_b = p_b + z_vals * se_b
+                left_a, right_a = pvalue_pkg.choose_from_bounds(left_a, right_a, alternative, left_bound=np.array([0]), right_bound=np.array([1]))
+                left_b, right_b = pvalue_pkg.choose_from_bounds(left_b, right_b, alternative, left_bound=np.array([0]), right_bound=np.array([1]))
+                group_a_ci = list(zip(left_a, right_a))
+                group_b_ci = list(zip(left_b, right_b))
+            else:
+                # Theory-based CI for group means using t-intervals
+                corrected_alpha = pvalue_pkg.corrected_alpha(alpha_vals, alternative)
+                corrected_alpha = np.array([corrected_alpha]) if isinstance(corrected_alpha, float) else np.array(corrected_alpha)
+                n_a: int = len(a_values)
+                n_b: int = len(b_values)
+                se_a: float = np.std(a_values, ddof=1) / np.sqrt(max(n_a, 1))
+                se_b: float = np.std(b_values, ddof=1) / np.sqrt(max(n_b, 1))
+                t_a = sps.t.ppf(1 - corrected_alpha / 2, df=max(n_a - 1, 1))
+                t_b = sps.t.ppf(1 - corrected_alpha / 2, df=max(n_b - 1, 1))
+                left_a = group_a_value - t_a * se_a
+                right_a = group_a_value + t_a * se_a
+                left_b = group_b_value - t_b * se_b
+                right_b = group_b_value + t_b * se_b
+                left_a, right_a = pvalue_pkg.choose_from_bounds(left_a, right_a, alternative)
+                left_b, right_b = pvalue_pkg.choose_from_bounds(left_b, right_b, alternative)
+                group_a_ci = list(zip(left_a, right_a))
+                group_b_ci = list(zip(left_b, right_b))
+
+            sub_result["group_a_value"] = group_a_value
+            sub_result["group_b_value"] = group_b_value
+            sub_result["group_a_confidence_interval"] = group_a_ci
+            sub_result["group_b_confidence_interval"] = group_b_ci
             result[metric] = sub_result
         return result
 
@@ -453,6 +520,17 @@ class Tester(ABToolAbstract):
                     tmp["confidence_interval"] = [
                         (round(left, Tester._PRECISION_DIGITS), round(right, Tester._PRECISION_DIGITS))
                         for left, right in tmp["confidence_interval"]
+                    ]
+                # Round newly added group CIs similarly if present
+                if "group_a_confidence_interval" in tmp and tmp["group_a_confidence_interval"][0][0] is not None:
+                    tmp["group_a_confidence_interval"] = [
+                        (round(left, Tester._PRECISION_DIGITS), round(right, Tester._PRECISION_DIGITS))
+                        for left, right in tmp["group_a_confidence_interval"]
+                    ]
+                if "group_b_confidence_interval" in tmp and tmp["group_b_confidence_interval"][0][0] is not None:
+                    tmp["group_b_confidence_interval"] = [
+                        (round(left, Tester._PRECISION_DIGITS), round(right, Tester._PRECISION_DIGITS))
+                        for left, right in tmp["group_b_confidence_interval"]
                     ]
                 answer.append(pd.DataFrame(tmp))
         result_table = pd.concat(answer).reset_index(drop=True)
