@@ -1,17 +1,15 @@
-[tool.poetry]
+[project]
 name = "Ambrosia"
-version = "0.4.2"
+version = "0.4.3"
 description = "A Python library for working with A/B tests."
-license = "Apache-2.0"
-authors = [
-    "Aslan Bayramkulov <aslan.bayramkulov96@gmail.com>",
-    "Artem Khakimov <artem.khakimov@gmail.com>",
-    "Artem Vasin <p1not1equals1np@gmail.com>",
-]
 readme = "README.rst"
-homepage = "https://github.com/MobileTeleSystems/Ambrosia"
-repository = "https://github.com/MobileTeleSystems/Ambrosia"
-documentation = "https://ambrosia.readthedocs.io"
+license = { text = "Apache-2.0" }
+authors = [
+    { name = "Aslan Bayramkulov", email = "aslan.bayramkulov96@gmail.com" },
+    { name = "Artem Khakimov", email = "artem.khakimov@gmail.com" },
+    { name = "Artem Vasin", email = "p1not1equals1np@gmail.com" },
+]
+requires-python = ">=3.8, <3.15"
 keywords = [
     "ambrosia",
     "ab testing",
@@ -37,50 +35,55 @@ classifiers = [
     "Operating System :: MacOS",
     "Operating System :: Microsoft :: Windows",
 ]
-packages = [
-    { include = "ambrosia", from = "." },
+
+# Core runtime dependencies
+dependencies = [
+    "jinja2>=3.1.6,<4",
+    "joblib>=1.5.2,<2",
+    "numpy>=2.3.3,<3",
+    "pandas>=2.3.3,<3",
+    "pyyaml>=6.0.3,<7",
+    "scipy>=1.16.2,<2",
+    "tqdm>=4.67.1,<5",
+    "statsmodels>=0.14.5,<0.15",
 ]
 
-[tool.poetry.dependencies]
-python = ">=3.8, <3.15"
-jinja2 = "^3.0.0"
-joblib = "^1.1.0"
-numpy = ">=1.21"
-pandas = ">=1.1"
-pyspark = { version = ">=3.2", optional = true }
-PyYAML = ">=6.0"
-scipy = ">=1.7"
-tqdm = "^4.27.0"
-statsmodels = ">=0.13.0"
+[project.optional-dependencies]
+# Optional features exposed as extras
+spark = ["pyspark>=3.2"]
+knn = ["nmslib>=2.1.1"]
+ml = ["scikit-learn>=1.0.2", "catboost>=1.0.4"]
+opt = ["hyperopt>=0.2.7"]
+all = ["pyspark>=3.2", "nmslib>=2.1.1", "scikit-learn>=1.0.2", "catboost>=1.0.4", "hyperopt>=0.2.7"]
 
-# Optional heavy dependencies
-nmslib = { version = ">=2.1.1", optional = true }
-scikit-learn = { version = ">=1.0.2", optional = true }
-hyperopt = { version = ">=0.2.7", optional = true }
-catboost = { version = ">=1.0.4", optional = true }
+[project.urls]
+Homepage = "https://github.com/MobileTeleSystems/Ambrosia"
+Repository = "https://github.com/MobileTeleSystems/Ambrosia"
+Documentation = "https://ambrosia.readthedocs.io"
 
-[tool.poetry.dev-dependencies]
-autopep8 = "1.6.0"
-black = "22.6.0"
-isort = "5.10.1"
-pylint = "2.14.5"
-flake8 = "4.0.1"
-flake8-docstrings = "1.6.0"
-pytest = "7.1.2"
-pytest-cov = "3.0.0"
-pytest-lazy-fixture = "0.6.3"
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
-[tool.poetry.extras]
-spark = ["pyspark"]
-knn = ["nmslib"]
-ml = ["scikit-learn", "catboost"]
-opt = ["hyperopt"]
-all = ["pyspark", "nmslib", "scikit-learn", "catboost", "hyperopt"]
+[tool.hatch.build.targets.wheel]
+packages = ["ambrosia"]
+
+# Pixi configuration
+[tool.pixi.project]
+channels = ["conda-forge"]
+platforms = ["osx-arm64"]
+
+[tool.pixi.pypi-dependencies]
+ambrosia = { path = ".", editable = true }
+
+[tool.pixi.tasks]
+
+[tool.pixi.dependencies]
 
 [tool.black]
 line-length = 120
 target-version = ['py38', 'py39', 'py310', 'py311', 'py312', 'py313', 'py314']
-include = '\.pyi?$'
+include = '\\.pyi?$'
 exclude = '''
 
 (
@@ -108,7 +111,3 @@ markers = [
     "unit: mark a test as a unit test",
     "smoke: mark a test as smoke test"
 ]
-
-[build-system]
-requires = ["poetry-core>=1.0.0"]
-build-backend = "poetry.core.masonry.api"
