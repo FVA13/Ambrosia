@@ -14,7 +14,10 @@
 
 from typing import Any, List
 
-import nmslib
+try:
+    import nmslib  # type: ignore
+except Exception as exc:  # pragma: no cover
+    nmslib = None  # fallback for optional dependency
 import numpy as np
 
 
@@ -24,6 +27,10 @@ class NMTree:
     """
 
     def __init__(self, points: np.ndarray, payload: np.ndarray, ef_search: int):
+        if nmslib is None:
+            raise ImportError(
+                "nmslib is required for metric-based split. Install with `pip install '.[knn]'` or `pip install nmslib'."
+            )
         self.__was = set()
         self.__index = nmslib.init(space="l2")
         self.__index.addDataPointBatch(points)

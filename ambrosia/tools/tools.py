@@ -17,7 +17,12 @@ from typing import Callable, Dict, Iterable, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
-from hyperopt import fmin, hp, tpe
+try:
+    from hyperopt import fmin, hp, tpe  # type: ignore
+except Exception:  # pragma: no cover
+    fmin = None  # type: ignore
+    hp = None  # type: ignore
+    tpe = None  # type: ignore
 from joblib import Parallel, delayed, parallel_backend
 
 import ambrosia.tools._lib._tools_aide as aid_pkg
@@ -414,6 +419,10 @@ def optimize_group_size(
         **kwargs,
     )
     if solution == "hyperopt":
+        if fmin is None or hp is None or tpe is None:
+            raise ImportError(
+                "hyperopt is required for solution='hyperopt'. Install with `pip install '.[opt]'` or `pip install hyperopt`."
+            )
         lower_bound_degree: int = max(0, upper_bound_degree // 2)
         # log(2) for reduction to binary logarithm
         space = {
@@ -840,6 +849,10 @@ def optimize_mde(
         **kwargs,
     )
     if solution == "hyperopt":
+        if fmin is None or hp is None or tpe is None:
+            raise ImportError(
+                "hyperopt is required for solution='hyperopt'. Install with `pip install '.[opt]'` or `pip install hyperopt`."
+            )
         space = {"effect": hp.uniform("effect", 1, upper_bound_effect)}
         best = fmin(objective, space, algo=tpe.suggest, max_evals=evals, verbose=False)
         optimal_effect: float = best["effect"]

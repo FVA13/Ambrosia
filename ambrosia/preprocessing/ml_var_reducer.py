@@ -23,7 +23,10 @@ from typing import Any, Callable, Dict, Optional, Union
 import joblib
 import numpy as np
 import pandas as pd
-from catboost import CatBoostRegressor
+try:
+    from catboost import CatBoostRegressor  # type: ignore
+except Exception as exc:  # pragma: no cover
+    CatBoostRegressor = None  # type: ignore
 from sklearn.linear_model import Ridge
 from sklearn.metrics import mean_squared_error
 
@@ -131,6 +134,10 @@ class MLVarianceReducer(AbstractVarianceReducer):
         if self.model == "boosting":
             if "verbose" not in self.model_params:
                 self.model_params["verbose"] = False
+            if CatBoostRegressor is None:
+                raise ImportError(
+                    "CatBoost is required for 'boosting' model. Install with `pip install '.[ml]'` or `pip install catboost'."
+                )
             self.model = CatBoostRegressor(**self.model_params)
 
     def __init__(

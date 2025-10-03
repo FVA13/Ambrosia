@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "Ambrosia"
-version = "0.4.1"
+version = "0.4.2"
 description = "A Python library for working with A/B tests."
 license = "Apache-2.0"
 authors = [
@@ -22,10 +22,13 @@ keywords = [
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Topic :: Scientific/Engineering :: Mathematics",
-    "Programming Language :: Python :: 3.7",
     "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Programming Language :: Python :: 3",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Intended Audience :: Science/Research",
@@ -39,20 +42,22 @@ packages = [
 ]
 
 [tool.poetry.dependencies]
-python = ">=3.7.2, <3.11.0"
+python = ">=3.8, <3.15"
 jinja2 = "^3.0.0"
 joblib = "^1.1.0"
-nmslib = "^2.0.4"
-numpy = ">=1.19.5, <2.0.0"
-pandas = ">=0.25.3, <2.0.0"
-pyspark = { version = "^3.2", optional = true }
-PyYAML = "6.0"
-scikit-learn = "^1.0.2"
-scipy = "^1.6.3"
+numpy = ">=1.21"
+pandas = ">=1.1"
+pyspark = { version = ">=3.2", optional = true }
+PyYAML = ">=6.0"
+scipy = ">=1.7"
 tqdm = "^4.27.0"
-hyperopt = "^0.2.7"
-catboost = "^1.0.4"
 statsmodels = ">=0.13.0"
+
+# Optional heavy dependencies
+nmslib = { version = ">=2.1.1", optional = true }
+scikit-learn = { version = ">=1.0.2", optional = true }
+hyperopt = { version = ">=0.2.7", optional = true }
+catboost = { version = ">=1.0.4", optional = true }
 
 [tool.poetry.dev-dependencies]
 autopep8 = "1.6.0"
@@ -67,10 +72,14 @@ pytest-lazy-fixture = "0.6.3"
 
 [tool.poetry.extras]
 spark = ["pyspark"]
+knn = ["nmslib"]
+ml = ["scikit-learn", "catboost"]
+opt = ["hyperopt"]
+all = ["pyspark", "nmslib", "scikit-learn", "catboost", "hyperopt"]
 
 [tool.black]
 line-length = 120
-target-version = ['py37', 'py38', 'py39', 'py310']
+target-version = ['py38', 'py39', 'py310', 'py311', 'py312', 'py313', 'py314']
 include = '\.pyi?$'
 exclude = '''
 
@@ -101,5 +110,5 @@ markers = [
 ]
 
 [build-system]
-requires = ["poetry>=1.0.5"]
-build-backend = "poetry.masonry.api"
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
