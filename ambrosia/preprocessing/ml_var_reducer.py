@@ -27,8 +27,18 @@ try:
     from catboost import CatBoostRegressor  # type: ignore
 except Exception as exc:  # pragma: no cover
     CatBoostRegressor = None  # type: ignore
-from sklearn.linear_model import Ridge
-from sklearn.metrics import mean_squared_error
+try:
+    from sklearn.linear_model import Ridge  # type: ignore
+except Exception:  # pragma: no cover
+    Ridge = None  # type: ignore
+
+try:
+    from sklearn.metrics import mean_squared_error  # type: ignore
+except Exception:  # pragma: no cover
+    def mean_squared_error(y_true, y_pred):  # type: ignore
+        y_true_arr = np.asarray(y_true)
+        y_pred_arr = np.asarray(y_pred)
+        return float(np.mean((y_true_arr - y_pred_arr) ** 2))
 
 from ambrosia import types
 from ambrosia.tools import log
@@ -130,6 +140,10 @@ class MLVarianceReducer(AbstractVarianceReducer):
         if not isinstance(self.model, str):
             self.model = self.model(**self.model_params)
         if self.model == "linear":
+            if Ridge is None:
+                raise ImportError(
+                    "scikit-learn is required for model='linear'. Install with `pip install '.[ml]'` or `pip install scikit-learn`."
+                )
             self.model = Ridge(**self.model_params)
         if self.model == "boosting":
             if "verbose" not in self.model_params:

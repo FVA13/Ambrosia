@@ -23,7 +23,10 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tupl
 
 import numpy as np
 import pandas as pd
-from sklearn.manifold import TSNE
+try:
+    from sklearn.manifold import TSNE  # type: ignore
+except Exception:  # pragma: no cover
+    TSNE = None  # type: ignore
 
 import ambrosia.tools.stratification as strat_pkg
 from ambrosia import types
@@ -283,6 +286,10 @@ def get_dim_decrease_split(
     groups : List[np.ndarray]
        List of arrays with indices for each groups.
     """
+    if TSNE is None:
+        raise ImportError(
+            "scikit-learn is required for split_method='dim_decrease'. Install with `pip install '.[ml]'` or `pip install scikit-learn`."
+        )
     data: np.ndarray = df[fit_columns].values
     model: TSNE = TSNE(n_components=1, learning_rate="auto", init="random", n_jobs=-2)
     labels: np.ndarray = model.fit_transform(data)
