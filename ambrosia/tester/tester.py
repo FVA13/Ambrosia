@@ -667,6 +667,8 @@ class Tester(ABToolAbstract):
             result = Tester.__apply_second_stage_multitest_correction(result, hypothesis_num, correction_method)
         if not as_table:
             result = result.to_dict(orient="records")
+        else:
+            result = result.set_index("metric name")
         return result
 
 
