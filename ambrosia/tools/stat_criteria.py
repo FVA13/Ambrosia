@@ -213,6 +213,74 @@ class PostStratTtestCriterion(ABStatCriterion):
 
     implemented_effect_types: List = ["absolute"]
 
+    def calculate_pvalue(self, group_a, group_b, effect_type: str = "absolute", **kwargs):
+        if effect_type != "absolute":
+            raise ValueError(self._send_type_error_msg())
+        if not (isinstance(group_a, pd.DataFrame) and isinstance(group_b, pd.DataFrame)):
+            return TtestIndCriterion().calculate_pvalue(group_a, group_b, effect_type, **kwargs)
+
+        strat_columns = kwargs.get("post_strat_columns")
+        column = kwargs.get("column")
+        target = kwargs.get("post_strat_target", None)
+        alternative = kwargs.get("alternative", "two-sided")
+        if strat_columns is None or column is None:
+            raise ValueError("Pass 'post_strat_columns' and 'column' for PostStratTtestCriterion")
+
+        # effect and CI not needed for pvalue
+        _, _, pvalue = post_strat_ttest(
+            group_a,
+            group_b,
+            column,
+            strat_columns,
+            alpha=np.array([0.05]),
+            alternative=alternative,
+            post_strat_target=target,
+        )
+        return pvalue
+
+    def calculate_effect(self, group_a, group_b, effect_type: str = "absolute"):
+        if effect_type != "absolute":
+            raise ValueError(self._send_type_error_msg())
+        if not (isinstance(group_a, pd.DataFrame) and isinstance(group_b, pd.DataFrame)):
+            return get_calc_effect_ttest(group_a, group_b, effect_type)
+        # Effect depends on kwargs, so raise to use get_results/calculate_conf_interval path
+        # In the framework, effect is computed with kwargs; here return NaN to indicate unavailable without kwargs
+        return np.nan
+
+    def calculate_conf_interval(
+        self,
+        group_a,
+        group_b,
+        alpha: types.StatErrorType = np.array([0.05]),
+        effect_type: str = "absolute",
+        **kwargs,
+    ):
+        if isinstance(alpha, float):
+            alpha = np.array([alpha])
+        if effect_type != "absolute":
+            raise ValueError(self._send_type_error_msg())
+        if not (isinstance(group_a, pd.DataFrame) and isinstance(group_b, pd.DataFrame)):
+            # For arrays, defer to standard t-test CI
+            return TtestIndCriterion().calculate_conf_interval(group_a, group_b, alpha, effect_type, **kwargs)
+
+        strat_columns = kwargs.get("post_strat_columns")
+        column = kwargs.get("column")
+        target = kwargs.get("post_strat_target", None)
+        alternative = kwargs.get("alternative", "two-sided")
+        if strat_columns is None or column is None:
+            raise ValueError("Pass 'post_strat_columns' and 'column' for PostStratTtestCriterion")
+
+        _, conf_int, _ = post_strat_ttest(
+            group_a,
+            group_b,
+            column,
+            strat_columns,
+            alpha=alpha,
+            alternative=alternative,
+            post_strat_target=target,
+        )
+        return conf_int
+
     def get_results(
         self,
         group_a,
@@ -223,8 +291,6 @@ class PostStratTtestCriterion(ABStatCriterion):
     ) -> types.StatCriterionResult:
         if effect_type != "absolute":
             raise ValueError(self._send_type_error_msg())
-
-        # If only arrays provided, use standard t-test
         if not (isinstance(group_a, pd.DataFrame) and isinstance(group_b, pd.DataFrame)):
             return TtestIndCriterion().get_results(group_a, group_b, alpha, effect_type, **kwargs)
 
