@@ -16,10 +16,12 @@
 from typing import List, Tuple
 
 import numpy as np
+import pandas as pd
 import scipy.stats as sps
 
 import ambrosia.tools.pvalue_tools as pvalue_pkg
 import ambrosia.tools.theoretical_tools as theory_pkg
+from ambrosia.tools.post_stratification import post_strat_ttest
 from ambrosia import types
 from ambrosia.tools.ab_abstract_component import ABStatCriterion, StatCriterion
 
@@ -197,6 +199,53 @@ class TtestRelCriterion(ABStatCriterion):
             effect: float = self.calculate_effect(group_a, group_b, "relative")
             return get_results_dict(alpha, pvalue, effect, conf_int)
         return super().get_results(group_a, group_b, alpha, effect_type, **kwargs)
+
+
+class PostStratTtestCriterion(ABStatCriterion):
+    """
+    Post-stratified Welch t-test (absolute effect).
+    Accepts pandas DataFrames for groups and requires kwargs:
+        - column: metric column name
+        - post_strat_columns: list of stratification columns
+        - post_strat_target: dict/str (optional)
+    Falls back to unweighted T-test if arrays are passed.
+    """
+
+    implemented_effect_types: List = ["absolute"]
+
+    def get_results(
+        self,
+        group_a,
+        group_b,
+        alpha: types.StatErrorType = 0.05,
+        effect_type: str = "absolute",
+        **kwargs,
+    ) -> types.StatCriterionResult:
+        if effect_type != "absolute":
+            raise ValueError(self._send_type_error_msg())
+
+        # If only arrays provided, use standard t-test
+        if not (isinstance(group_a, pd.DataFrame) and isinstance(group_b, pd.DataFrame)):
+            return TtestIndCriterion().get_results(group_a, group_b, alpha, effect_type, **kwargs)
+
+        strat_columns = kwargs.get("post_strat_columns")
+        column = kwargs.get("column")
+        target = kwargs.get("post_strat_target", None)
+        alternative = kwargs.get("alternative", "two-sided")
+        if strat_columns is None or column is None:
+            raise ValueError("Pass 'post_strat_columns' and 'column' for PostStratTtestCriterion")
+
+        alphas = np.array([alpha]) if isinstance(alpha, float) else np.array(alpha)
+        effect, conf_int, pvalue = post_strat_ttest(
+            group_a,
+            group_b,
+            column,
+            strat_columns,
+            alpha=alphas,
+            alternative=alternative,
+            post_strat_target=target,
+        )
+        return get_results_dict(alphas, pvalue, effect, conf_int)
 
 
 class MannWhitneyCriterion(ABStatCriterion):

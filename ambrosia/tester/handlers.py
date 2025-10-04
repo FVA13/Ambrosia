@@ -40,6 +40,7 @@ class PandasCriteria(enum.Enum):
     ttest_rel: StatCriterion = criteria_pkg.TtestRelCriterion
     mw: StatCriterion = criteria_pkg.MannWhitneyCriterion
     wilcoxon: StatCriterion = criteria_pkg.WilcoxonCriterion
+    wttest: StatCriterion = criteria_pkg.PostStratTtestCriterion
 
 
 class SparkCriteria(enum.Enum):
@@ -79,8 +80,12 @@ class TheoreticalTesterHandler:
 
     def _set_kwargs(self):
         if isinstance(self.group_a, pd.DataFrame):
-            self.group_a = self.group_a[self.column].values
-            self.group_b = self.group_b[self.column].values
+            # Keep full DataFrames if post-stratification is requested
+            if "post_strat_columns" in self.kwargs:
+                self.kwargs["column"] = self.column
+            else:
+                self.group_a = self.group_a[self.column].values
+                self.group_b = self.group_b[self.column].values
         elif isinstance(self.group_a, types.SparkDataFrame):
             self.kwargs["column"] = self.column
         self.kwargs["alpha"] = self.alpha
