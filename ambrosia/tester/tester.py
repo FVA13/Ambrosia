@@ -318,11 +318,34 @@ class Tester(ABToolAbstract):
         left_bounds, right_bounds = bootstrap_handler.confidence_interval(confidence_level=1 - alpha, **kwargs)
         pvalue = bootstrap_handler.pvalue_criterion(**kwargs)
         confidence_interval = list(zip(left_bounds, right_bounds))
+
+        # Per-group point estimates and bootstrap CIs for means
+        alternative: str = kwargs.get("alternative", "two-sided")
+        group_a_value: float = float(np.mean(group_a))
+        group_b_value: float = float(np.mean(group_b))
+        bs_size: int = kwargs.get("bootstrap_size", bootstrap_size)
+        bs_stat_a: np.ndarray = empirical_pkg.get_bs_stat(group_a, stat="mean", N=bs_size)
+        bs_stat_b: np.ndarray = empirical_pkg.get_bs_stat(group_b, stat="mean", N=bs_size)
+        corrected_alpha = pvalue_pkg.corrected_alpha(alpha, alternative)
+        corrected_alpha = np.array([corrected_alpha]) if isinstance(corrected_alpha, float) else np.array(corrected_alpha)
+        left_a = np.quantile(bs_stat_a, q=corrected_alpha / 2)
+        right_a = np.quantile(bs_stat_a, q=1 - corrected_alpha / 2)
+        left_b = np.quantile(bs_stat_b, q=corrected_alpha / 2)
+        right_b = np.quantile(bs_stat_b, q=1 - corrected_alpha / 2)
+        left_a, right_a = pvalue_pkg.choose_from_bounds(left_a, right_a, alternative)
+        left_b, right_b = pvalue_pkg.choose_from_bounds(left_b, right_b, alternative)
+        group_a_ci = list(zip(left_a, right_a))
+        group_b_ci = list(zip(left_b, right_b))
+
         return {
             "first_type_error": alpha,
             "pvalue": pvalue,
             "effect": point_effect,
             "confidence_interval": confidence_interval,
+            "group_a_value": group_a_value,
+            "group_b_value": group_b_value,
+            "group_a_confidence_interval": group_a_ci,
+            "group_b_confidence_interval": group_b_ci,
         }
 
     @staticmethod
@@ -336,11 +359,34 @@ class Tester(ABToolAbstract):
         if not set(np.unique(group_a)).issubset({0, 1}) or not set(np.unique(group_b)).issubset({0, 1}):
             warn(warning_message_values)
         if effect_type == "absolute":
-            return binary_absolute_result(group_a, group_b, alpha, **kwargs)
+            sub = binary_absolute_result(group_a, group_b, alpha, **kwargs)
         elif effect_type == "relative":
-            return binary_relative_result(group_a, group_b, alpha, **kwargs)
+            sub = binary_relative_result(group_a, group_b, alpha, **kwargs)
         else:
             raise ValueError(f"``effect_type`` variable could be only  'absolute' or 'relative, got {effect_type}.")
+
+        # Per-group point estimates and normal-approximation CIs (bounded to [0,1])
+        alternative: str = kwargs.get("alternative", "two-sided")
+        p_a: float = float(np.mean(group_a))
+        p_b: float = float(np.mean(group_b))
+        n_a: int = len(group_a)
+        n_b: int = len(group_b)
+        corrected_alpha = pvalue_pkg.corrected_alpha(alpha, alternative)
+        corrected_alpha = np.array([corrected_alpha]) if isinstance(corrected_alpha, float) else np.array(corrected_alpha)
+        z_vals = sps.norm.ppf(1 - corrected_alpha / 2)
+        se_a = np.sqrt(np.maximum(p_a * (1 - p_a), 0.0) / max(n_a, 1))
+        se_b = np.sqrt(np.maximum(p_b * (1 - p_b), 0.0) / max(n_b, 1))
+        left_a = p_a - z_vals * se_a
+        right_a = p_a + z_vals * se_a
+        left_b = p_b - z_vals * se_b
+        right_b = p_b + z_vals * se_b
+        left_a, right_a = pvalue_pkg.choose_from_bounds(left_a, right_a, alternative, left_bound=np.array([0]), right_bound=np.array([1]))
+        left_b, right_b = pvalue_pkg.choose_from_bounds(left_b, right_b, alternative, left_bound=np.array([0]), right_bound=np.array([1]))
+        sub["group_a_value"] = p_a
+        sub["group_b_value"] = p_b
+        sub["group_a_confidence_interval"] = list(zip(left_a, right_a))
+        sub["group_b_confidence_interval"] = list(zip(left_b, right_b))
+        return sub
 
     @staticmethod
     def __theory_handler(
@@ -361,7 +407,31 @@ class Tester(ABToolAbstract):
             raise ValueError(
                 f"Choose correct criterion name from {list(AVAILABLE_AB_CRITERIA)} or pass correct custom class"
             )
-        return criterion().get_results(group_a=group_a, group_b=group_b, alpha=alpha, effect_type=effect_type, **kwargs)
+        sub = criterion().get_results(group_a=group_a, group_b=group_b, alpha=alpha, effect_type=effect_type, **kwargs)
+
+        # Per-group point estimates and t-interval CIs for means
+        alternative: str = kwargs.get("alternative", "two-sided")
+        group_a_value: float = float(np.mean(group_a))
+        group_b_value: float = float(np.mean(group_b))
+        corrected_alpha = pvalue_pkg.corrected_alpha(alpha, alternative)
+        corrected_alpha = np.array([corrected_alpha]) if isinstance(corrected_alpha, float) else np.array(corrected_alpha)
+        n_a: int = len(group_a)
+        n_b: int = len(group_b)
+        se_a: float = np.std(group_a, ddof=1) / np.sqrt(max(n_a, 1))
+        se_b: float = np.std(group_b, ddof=1) / np.sqrt(max(n_b, 1))
+        t_a = sps.t.ppf(1 - corrected_alpha / 2, df=max(n_a - 1, 1))
+        t_b = sps.t.ppf(1 - corrected_alpha / 2, df=max(n_b - 1, 1))
+        left_a = group_a_value - t_a * se_a
+        right_a = group_a_value + t_a * se_a
+        left_b = group_b_value - t_b * se_b
+        right_b = group_b_value + t_b * se_b
+        left_a, right_a = pvalue_pkg.choose_from_bounds(left_a, right_a, alternative)
+        left_b, right_b = pvalue_pkg.choose_from_bounds(left_b, right_b, alternative)
+        sub["group_a_value"] = group_a_value
+        sub["group_b_value"] = group_b_value
+        sub["group_a_confidence_interval"] = list(zip(left_a, right_a))
+        sub["group_b_confidence_interval"] = list(zip(left_b, right_b))
+        return sub
 
     @staticmethod
     def __pre_run(method: str, args: types._UsageArgumentsType, **kwargs) -> types.TesterResult:
@@ -398,72 +468,6 @@ class Tester(ABToolAbstract):
                 sub_result = Tester.__binary_result(
                     a_values, b_values, np.array(args["alpha"]), effect_type=args["effect_type"], **kwargs
                 )
-            # Augment sub_result with per-group metric values and confidence intervals
-            alternative: str = kwargs.get("alternative", "two-sided")
-            alpha_vals: np.ndarray = np.array(args["alpha"]) if not isinstance(args["alpha"], np.ndarray) else args["alpha"]
-            # Group point estimates (mean / proportion)
-            group_a_value: float = float(np.mean(a_values))
-            group_b_value: float = float(np.mean(b_values))
-
-            # Compute CI for each group depending on method
-            if method == "empiric":
-                # Bootstrap CI for group means
-                bs_size: int = kwargs.get("bootstrap_size", BOOTSTRAP_SIZE)
-                bs_stat_a: np.ndarray = empirical_pkg.get_bs_stat(a_values, stat="mean", N=bs_size)
-                bs_stat_b: np.ndarray = empirical_pkg.get_bs_stat(b_values, stat="mean", N=bs_size)
-                corrected_alpha = pvalue_pkg.corrected_alpha(alpha_vals, alternative)
-                corrected_alpha = np.array([corrected_alpha]) if isinstance(corrected_alpha, float) else np.array(corrected_alpha)
-                left_a = np.quantile(bs_stat_a, q=corrected_alpha / 2)
-                right_a = np.quantile(bs_stat_a, q=1 - corrected_alpha / 2)
-                left_b = np.quantile(bs_stat_b, q=corrected_alpha / 2)
-                right_b = np.quantile(bs_stat_b, q=1 - corrected_alpha / 2)
-                left_a, right_a = pvalue_pkg.choose_from_bounds(left_a, right_a, alternative)
-                left_b, right_b = pvalue_pkg.choose_from_bounds(left_b, right_b, alternative)
-                group_a_ci = list(zip(left_a, right_a))
-                group_b_ci = list(zip(left_b, right_b))
-            elif method == "binary":
-                # Normal approximation CI for proportions with bounds [0,1]
-                p_a: float = group_a_value
-                p_b: float = group_b_value
-                n_a: int = len(a_values)
-                n_b: int = len(b_values)
-                corrected_alpha = pvalue_pkg.corrected_alpha(alpha_vals, alternative)
-                corrected_alpha = np.array([corrected_alpha]) if isinstance(corrected_alpha, float) else np.array(corrected_alpha)
-                z_vals = sps.norm.ppf(1 - corrected_alpha / 2)
-                se_a = np.sqrt(np.maximum(p_a * (1 - p_a), 0.0) / max(n_a, 1))
-                se_b = np.sqrt(np.maximum(p_b * (1 - p_b), 0.0) / max(n_b, 1))
-                # Ensure array shapes
-                left_a = p_a - z_vals * se_a
-                right_a = p_a + z_vals * se_a
-                left_b = p_b - z_vals * se_b
-                right_b = p_b + z_vals * se_b
-                left_a, right_a = pvalue_pkg.choose_from_bounds(left_a, right_a, alternative, left_bound=np.array([0]), right_bound=np.array([1]))
-                left_b, right_b = pvalue_pkg.choose_from_bounds(left_b, right_b, alternative, left_bound=np.array([0]), right_bound=np.array([1]))
-                group_a_ci = list(zip(left_a, right_a))
-                group_b_ci = list(zip(left_b, right_b))
-            else:
-                # Theory-based CI for group means using t-intervals
-                corrected_alpha = pvalue_pkg.corrected_alpha(alpha_vals, alternative)
-                corrected_alpha = np.array([corrected_alpha]) if isinstance(corrected_alpha, float) else np.array(corrected_alpha)
-                n_a: int = len(a_values)
-                n_b: int = len(b_values)
-                se_a: float = np.std(a_values, ddof=1) / np.sqrt(max(n_a, 1))
-                se_b: float = np.std(b_values, ddof=1) / np.sqrt(max(n_b, 1))
-                t_a = sps.t.ppf(1 - corrected_alpha / 2, df=max(n_a - 1, 1))
-                t_b = sps.t.ppf(1 - corrected_alpha / 2, df=max(n_b - 1, 1))
-                left_a = group_a_value - t_a * se_a
-                right_a = group_a_value + t_a * se_a
-                left_b = group_b_value - t_b * se_b
-                right_b = group_b_value + t_b * se_b
-                left_a, right_a = pvalue_pkg.choose_from_bounds(left_a, right_a, alternative)
-                left_b, right_b = pvalue_pkg.choose_from_bounds(left_b, right_b, alternative)
-                group_a_ci = list(zip(left_a, right_a))
-                group_b_ci = list(zip(left_b, right_b))
-
-            sub_result["group_a_value"] = group_a_value
-            sub_result["group_b_value"] = group_b_value
-            sub_result["group_a_confidence_interval"] = group_a_ci
-            sub_result["group_b_confidence_interval"] = group_b_ci
             result[metric] = sub_result
         return result
 
