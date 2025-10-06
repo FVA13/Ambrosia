@@ -336,6 +336,8 @@ class Tester(ABToolAbstract):
         left_b, right_b = pvalue_pkg.choose_from_bounds(left_b, right_b, alternative)
         group_a_ci = list(zip(left_a, right_a))
         group_b_ci = list(zip(left_b, right_b))
+        n_a: int = len(group_a)
+        n_b: int = len(group_b)
 
         return {
             "first_type_error": alpha,
@@ -346,6 +348,8 @@ class Tester(ABToolAbstract):
             "group_b_value": group_b_value,
             "group_a_confidence_interval": group_a_ci,
             "group_b_confidence_interval": group_b_ci,
+            "group_a_size": n_a,
+            "group_b_size": n_b,
         }
 
     @staticmethod
@@ -386,6 +390,8 @@ class Tester(ABToolAbstract):
         sub["group_b_value"] = p_b
         sub["group_a_confidence_interval"] = list(zip(left_a, right_a))
         sub["group_b_confidence_interval"] = list(zip(left_b, right_b))
+        sub["group_a_size"] = n_a
+        sub["group_b_size"] = n_b
         return sub
 
     @staticmethod
@@ -431,6 +437,8 @@ class Tester(ABToolAbstract):
         sub["group_b_value"] = group_b_value
         sub["group_a_confidence_interval"] = list(zip(left_a, right_a))
         sub["group_b_confidence_interval"] = list(zip(left_b, right_b))
+        sub["group_a_size"] = n_a
+        sub["group_b_size"] = n_b
         return sub
 
     @staticmethod
