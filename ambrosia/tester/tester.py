@@ -200,7 +200,9 @@ class Tester(ABToolAbstract):
         self.__experiment_results = experiment_results
 
     def set_errors(self, first_type_errors: types.StatErrorType) -> None:
-        if isinstance(first_type_errors, float):
+        if first_type_errors is None:
+            self.__alpha = np.array([0.05])
+        elif isinstance(first_type_errors, float):
             self.__alpha = np.array([first_type_errors])
         else:
             self.__alpha = np.array(first_type_errors)
