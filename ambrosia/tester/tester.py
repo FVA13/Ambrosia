@@ -663,6 +663,8 @@ class Tester(ABToolAbstract):
         result: types.TesterResult = {}
         # Variating over all pairs of groups - comb(n, 2)
         for group_a_label, group_b_label in itertools.combinations(chosen_args["experiment_results"], 2):
+            if group_a_label == 'experiment' and group_b_label != 'experiment':
+                group_a_label, group_b_label = group_b_label, group_a_label
             test_name = f"group_{group_a_label}_vs_group_{group_b_label}"
             chosen_args["data_a_group"] = chosen_args["experiment_results"][group_a_label]
             chosen_args["data_b_group"] = chosen_args["experiment_results"][group_b_label]
