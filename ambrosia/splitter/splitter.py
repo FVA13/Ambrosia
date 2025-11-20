@@ -26,7 +26,7 @@ in form of both pandas and Spark(with some restrictions) dataframes.
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import List, Optional
 
 import yaml
 
@@ -242,6 +242,7 @@ class Splitter(yaml.YAMLObject, ABToolAbstract, metaclass=ABMetaClass):
         dataframe: Optional[types.PassedDataType] = None,
         id_column: Optional[types.ColumnNameType] = None,
         groups_size: Optional[int] = None,
+        groups_proportions: Optional[types.ColumnNamesType] = None,
         part_of_table: Optional[float] = None,
         groups_number: int = 2,
         test_group_ids: Optional[types.IndicesType] = None,
@@ -263,13 +264,18 @@ class Splitter(yaml.YAMLObject, ABToolAbstract, metaclass=ABMetaClass):
         id_column : IdColumnNameType, optional
              Name of id column which is used in hash split.
         groups_size : int, optional
-            Size of the splitted groups.
+            Size of the splitted groups (used when groups_proportions is None).
+            If groups_proportions is provided, this parameter is ignored.
+        groups_proportions : List[float], optional
+            List of proportions for each group (e.g., [0.1, 0.9] for 10:90 split,
+            [0.6, 0.4] for 60:40 split). Must sum to 1.0 (will be normalized if not).
+            If provided, overrides groups_size and groups_number parameters.
         part_of_table: float, optional
             Split factor(for group A) for tasks of dataframe full split.
             If is not ``None``, then overrides ``groups_size`` parameter
             during the split.
         groups_number : int, default: ``2``
-            Number of groups to be splitted.
+            Number of groups to be splitted (used when groups_proportions is None).
         test_group_ids : PeriodColumnNamesType, optional
             Ids of objects which are in B(test) group.
             Used in tasks of post experiment A(control) group pick up.
@@ -298,6 +304,7 @@ class Splitter(yaml.YAMLObject, ABToolAbstract, metaclass=ABMetaClass):
         method: str = type_checks.check_split_method_value(method)
         dataframe: types.PassedDataType = type_checks.check_type_dataframe(dataframe)
         id_column: types.ColumnNameType = type_checks.check_type_id_column(id_column)
+        groups_proportions: Optional[List[float]] = type_checks.check_type_groups_proportions(groups_proportions)
         groups_size: int = type_checks.check_type_group_size(groups_size)
         test_group_ids: types.IndicesType = type_checks.check_type_test_group_ids(test_group_ids)
         fit_columns: types.ColumnNamesType = type_checks.check_type_fit_columns(fit_columns)
@@ -311,18 +318,29 @@ class Splitter(yaml.YAMLObject, ABToolAbstract, metaclass=ABMetaClass):
         test_group_ids = test_group_ids if test_group_ids is not None else self.__test_group_ids
         id_column = id_column if id_column is not None else self.__id_column
 
-        if test_group_ids is not None:
-            arguments_choice["group_b_indices"] = (None, test_group_ids)
+        # Handle groups_proportions if provided
+        if groups_proportions is not None:
+            if test_group_ids is not None:
+                raise ValueError("groups_proportions cannot be used with test_group_ids")
+            if part_of_table is not None:
+                raise ValueError("groups_proportions cannot be used with part_of_table")
+            groups_number = len(groups_proportions)
+            # Calculate group sizes based on proportions
+            # We'll calculate this after we have the dataframe size
+            arguments_choice["groups_proportions"] = (None, groups_proportions)
         else:
-            arguments_choice["groups_size"] = (self.__groups_size, groups_size)
-        if part_of_table is not None:
-            # Group size will be set later
-            arguments_choice["groups_size"] = (self.__groups_size, 0)
-            if groups_size is not None:
-                log.info_log("Groups size variable ignored because part splitting variable set")
-            if groups_number > 2:
-                groups_number = 2
-                log.info_log("Groups number was set to 2 because part splitting variable set")
+            if test_group_ids is not None:
+                arguments_choice["group_b_indices"] = (None, test_group_ids)
+            else:
+                arguments_choice["groups_size"] = (self.__groups_size, groups_size)
+            if part_of_table is not None:
+                # Group size will be set later
+                arguments_choice["groups_size"] = (self.__groups_size, 0)
+                if groups_size is not None:
+                    log.info_log("Groups size variable ignored because part splitting variable set")
+                if groups_number > 2:
+                    groups_number = 2
+                    log.info_log("Groups number was set to 2 because part splitting variable set")
 
         if method in ("metric", "dim_decrease"):
             # For methods use metric/cluster/unsupervised approach
@@ -330,7 +348,17 @@ class Splitter(yaml.YAMLObject, ABToolAbstract, metaclass=ABMetaClass):
 
         chosen_args: types._UsageArgumentsType = Splitter._prepare_arguments(arguments_choice)
 
-        if part_of_table is not None:
+        # Calculate group sizes from proportions if provided
+        if groups_proportions is not None:
+            total_size = data_shape(chosen_args["dataframe"])
+            groups_sizes = [round(p * total_size) for p in groups_proportions]
+            # Ensure the sum equals total_size (adjust the last group if needed)
+            diff = total_size - sum(groups_sizes)
+            if diff != 0:
+                groups_sizes[-1] += diff
+            chosen_args["groups_sizes"] = groups_sizes
+            chosen_args["groups_number"] = groups_number
+        elif part_of_table is not None:
             split_part: float = part_of_table if (part_of_table <= SPLITTING_BOUND_CONST) else 1 - part_of_table
             chosen_args["groups_size"] = round(split_part * data_shape(chosen_args["dataframe"]))
 
@@ -338,7 +366,8 @@ class Splitter(yaml.YAMLObject, ABToolAbstract, metaclass=ABMetaClass):
         chosen_args["id_column"] = id_column
         chosen_args["strat_columns"] = strat_columns
         chosen_args["salt"] = salt
-        chosen_args["groups_number"] = groups_number
+        if "groups_number" not in chosen_args:
+            chosen_args["groups_number"] = groups_number
         groups: types.SplitterResult = split_data_handler(**chosen_args, **kwargs)
 
         if part_of_table is not None:
@@ -366,6 +395,7 @@ def split(
     dataframe: Optional[types.PassedDataType] = None,
     id_column: Optional[types.ColumnNameType] = None,
     groups_size: Optional[int] = None,
+    groups_proportions: Optional[List[float]] = None,
     part_of_table: Optional[float] = None,
     groups_number: int = 2,
     test_group_ids: Optional[types.IndicesType] = None,
@@ -393,13 +423,18 @@ def split(
     id_column : IdColumnNameType, optional
             Name of id column which is used in hash split.
     groups_size : int, optional
-        Size of the splitted groups.
+        Size of the splitted groups (used when groups_proportions is None).
+        If groups_proportions is provided, this parameter is ignored.
+    groups_proportions : List[float], optional
+        List of proportions for each group (e.g., [0.1, 0.9] for 10:90 split,
+        [0.6, 0.4] for 60:40 split). Must sum to 1.0 (will be normalized if not).
+        If provided, overrides groups_size and groups_number parameters.
     part_of_table: float, optional
         Split factor(for group A) for tasks of dataframe full split.
         If is not ``None``, then overrides ``groups_size`` parameter
         during the split.
     groups_number : int, default : ``2``
-        Number of groups to be splitted.
+        Number of groups to be splitted (used when groups_proportions is None).
     test_group_ids : PeriodColumnNamesType, optional
         Ids of objects which are in B(test) group.
         Used in tasks of post experiment A(control) group pick up.
@@ -429,4 +464,4 @@ def split(
         fit_columns=fit_columns,
         test_group_ids=test_group_ids,
         strat_columns=strat_columns,
-    ).run(method, salt=salt, threads=threads, part_of_table=part_of_table, groups_number=groups_number, **kwargs)
+    ).run(method, salt=salt, threads=threads, part_of_table=part_of_table, groups_number=groups_number, groups_proportions=groups_proportions, **kwargs)

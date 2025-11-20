@@ -105,6 +105,22 @@ def check_type_group_size(groups_size: int) -> int:
 
 
 @none_check_decorator
+def check_type_groups_proportions(groups_proportions: List[float]) -> List[float]:
+    if isinstance(groups_proportions, (list, tuple)):
+        if len(groups_proportions) < 2:
+            raise ValueError("groups_proportions must contain at least 2 values")
+        if not all(isinstance(p, (int, float)) for p in groups_proportions):
+            raise TypeError("All values in groups_proportions must be numeric")
+        if not all(p > 0 for p in groups_proportions):
+            raise ValueError("All values in groups_proportions must be positive")
+        # Normalize proportions to sum to 1
+        total = sum(groups_proportions)
+        return [float(p) / total for p in groups_proportions]
+    else:
+        raise TypeError("groups_proportions variable must be a list or tuple of numbers")
+
+
+@none_check_decorator
 def check_type_test_group_ids(test_group_ids: types.IndicesType) -> types.IndicesType:
     if isinstance(test_group_ids, Iterable):
         return test_group_ids

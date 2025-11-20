@@ -357,6 +357,7 @@ def get_split(
     dataframe: pd.DataFrame,
     split_method: str,
     groups_size: Optional[int] = None,
+    groups_sizes: Optional[List[int]] = None,
     groups_number: int = 2,
     group_b_indices: Iterable[int] = None,
     id_column: types.ColumnNameType = None,
@@ -379,8 +380,10 @@ def get_split(
         Method used for split task.
     id_column : str
         Name of ids column in dataframe.
-    groups_size : int
-        Sampling size of groups.
+    groups_size : int, optional
+        Sampling size of groups (used when groups_sizes is None).
+    groups_sizes : List[int], optional
+        List of sizes for each group. If provided, overrides groups_size.
     groups_number : int, default: ``2``
         Number of groups to be sampled
     group_b_indices: np.ndarray, optional
@@ -415,12 +418,28 @@ def get_split(
     elif not stratifier.is_trained():
         stratifier.fit(dataframe, strat_columns)
 
-    error_size_msg: str = "Total size for all groups is bigger than total shape of table"
-    cond_empty_b: bool = group_b_indices is None and groups_number * groups_size > stratifier.size()
-    cond_b_id: bool = group_b_indices is not None and groups_number * len(group_b_indices) > stratifier.size()
+    # Determine group sizes
+    if groups_sizes is not None:
+        groups_number = len(groups_sizes)
+        if groups_size is not None:
+            import warnings
+            warnings.warn("groups_size is ignored when groups_sizes is provided")
+    elif group_b_indices is not None:
+        groups_sizes = None  # Will be set later
+    elif groups_size is None:
+        raise ValueError("Set groups size or groups_sizes, if you do not set ids for B group")
+    else:
+        groups_sizes = [groups_size] * groups_number
 
-    if cond_empty_b or cond_b_id:
-        raise ValueError(error_size_msg)
+    error_size_msg: str = "Total size for all groups is bigger than total shape of table"
+    if group_b_indices is not None:
+        cond_b_id: bool = groups_number * len(group_b_indices) > stratifier.size()
+        if cond_b_id:
+            raise ValueError(error_size_msg)
+    elif groups_sizes is not None:
+        cond_empty_b: bool = sum(groups_sizes) > stratifier.size()
+        if cond_empty_b:
+            raise ValueError(error_size_msg)
 
     # Can't split for more than two groups with fixed test group
     if groups_number > 2 and group_b_indices is not None:
@@ -433,49 +452,140 @@ def get_split(
 
     if group_b_indices is not None:
         test_inds: Dict[Tuple, Tuple[List, int]] = stratifier.get_test_inds(group_b_indices, id_column)
-        groups_size = len(group_b_indices)
-    elif groups_size is None:
-        raise ValueError("Set groups size, if you do not set ids for B group")
+        groups_sizes = [len(group_b_indices)] * groups_number
     else:
-        strat_sizes: Dict[Tuple, int] = stratifier.get_group_sizes(groups_size)
+        # Calculate strat sizes for each group
+        strat_sizes_dict: Dict[int, Dict[Tuple, int]] = {}
+        for group_idx in range(groups_number):
+            strat_sizes_dict[group_idx] = stratifier.get_group_sizes(groups_sizes[group_idx])
 
     for strat_value, strat_table in stratifier.groups():
         if group_b_indices is None:
-            strat_group_size: int = int(strat_sizes[strat_value])
+            # Calculate group sizes for this stratification group
+            strat_group_sizes: List[int] = []
+            for group_idx in range(groups_number):
+                strat_group_sizes.append(int(strat_sizes_dict[group_idx][strat_value]))
             id_b = None
         else:
             strat_group_size: int = len(test_inds[strat_value][0])
+            strat_group_sizes = [strat_group_size] * groups_number
             if id_column is None:
                 id_b = test_inds[strat_value][0]
             else:
                 id_b = dataframe.loc[dataframe[id_column].isin(test_inds[strat_value][0])].index.values
+        
+        # For methods that don't support different group sizes, use the first group size
+        # This maintains backward compatibility but limits functionality
+        # TODO: Update split methods to support different group sizes
         if split_method == "hash":
+            # Hash split currently assumes equal sizes, so we'll use the minimum size
+            # and handle the rest later
+            min_size = min(strat_group_sizes)
             splitted_groups = get_hash_split(
                 strat_table,
                 id_column=id_column,
-                group_size=strat_group_size,
+                group_size=min_size,
                 groups_number=groups_number,
                 group_b_indices=id_b,
                 salt=salt,
                 hash_function=hash_function,
             )
+            # Adjust groups to match required sizes
+            for j in range(groups_number):
+                if len(splitted_groups[j]) < strat_group_sizes[j]:
+                    # Need to add more elements to this group
+                    used_in_strat = np.hstack([splitted_groups[k] for k in range(groups_number)])
+                    available = strat_table.index.difference(used_in_strat)
+                    needed = strat_group_sizes[j] - len(splitted_groups[j])
+                    if len(available) >= needed:
+                        # Use deterministic random if salt is provided
+                        if salt is not None:
+                            stable_random = np.random.RandomState(get_integer_salt(salt))
+                            additional = stable_random.choice(available, needed, replace=False)
+                        else:
+                            additional = np.random.choice(available, needed, replace=False)
+                        splitted_groups[j] = np.append(splitted_groups[j], additional)
+                    else:
+                        splitted_groups[j] = np.append(splitted_groups[j], available)
+                elif len(splitted_groups[j]) > strat_group_sizes[j]:
+                    # Need to remove excess elements
+                    splitted_groups[j] = splitted_groups[j][:strat_group_sizes[j]]
         elif split_method == "metric":
+            # Metric split also assumes equal sizes
+            min_size = min(strat_group_sizes)
             splitted_groups = get_metric_split(
                 strat_table,
-                group_size=strat_group_size,
+                group_size=min_size,
                 fit_columns=fit_columns,
                 groups_number=groups_number,
                 group_b_indices=id_b,
                 threads=threads,
             )
+            # Adjust groups similarly to hash
+            for j in range(groups_number):
+                if len(splitted_groups[j]) < strat_group_sizes[j]:
+                    used_in_strat = np.hstack([splitted_groups[k] for k in range(groups_number)])
+                    available = strat_table.index.difference(used_in_strat)
+                    needed = strat_group_sizes[j] - len(splitted_groups[j])
+                    if len(available) >= needed:
+                        # Use deterministic random if salt is provided
+                        if salt is not None:
+                            stable_random = np.random.RandomState(get_integer_salt(salt))
+                            additional = stable_random.choice(available, needed, replace=False)
+                        else:
+                            additional = np.random.choice(available, needed, replace=False)
+                        splitted_groups[j] = np.append(splitted_groups[j], additional)
+                    else:
+                        splitted_groups[j] = np.append(splitted_groups[j], available)
+                elif len(splitted_groups[j]) > strat_group_sizes[j]:
+                    splitted_groups[j] = splitted_groups[j][:strat_group_sizes[j]]
         elif split_method == "simple":
+            # Simple split can handle different sizes directly
             splitted_groups = get_simple_split(
-                df=strat_table, group_size=strat_group_size, groups_number=groups_number, group_b_indices=id_b
+                df=strat_table, group_size=strat_group_sizes[0], groups_number=groups_number, group_b_indices=id_b
             )
+            # Adjust groups
+            for j in range(groups_number):
+                if len(splitted_groups[j]) < strat_group_sizes[j]:
+                    used_in_strat = np.hstack([splitted_groups[k] for k in range(groups_number)])
+                    available = strat_table.index.difference(used_in_strat)
+                    needed = strat_group_sizes[j] - len(splitted_groups[j])
+                    if len(available) >= needed:
+                        # Use deterministic random if salt is provided
+                        if salt is not None:
+                            stable_random = np.random.RandomState(get_integer_salt(salt))
+                            additional = stable_random.choice(available, needed, replace=False)
+                        else:
+                            additional = np.random.choice(available, needed, replace=False)
+                        splitted_groups[j] = np.append(splitted_groups[j], additional)
+                    else:
+                        splitted_groups[j] = np.append(splitted_groups[j], available)
+                elif len(splitted_groups[j]) > strat_group_sizes[j]:
+                    splitted_groups[j] = splitted_groups[j][:strat_group_sizes[j]]
         elif split_method == "dim_decrease":
+            # Dim decrease assumes equal sizes
+            min_size = min(strat_group_sizes)
             splitted_groups = get_dim_decrease_split(
-                df=strat_table, group_size=strat_group_size, groups_number=groups_number, fit_columns=fit_columns
+                df=strat_table, group_size=min_size, groups_number=groups_number, fit_columns=fit_columns
             )
+            # Adjust groups
+            for j in range(groups_number):
+                if len(splitted_groups[j]) < strat_group_sizes[j]:
+                    used_in_strat = np.hstack([splitted_groups[k] for k in range(groups_number)])
+                    available = strat_table.index.difference(used_in_strat)
+                    needed = strat_group_sizes[j] - len(splitted_groups[j])
+                    if len(available) >= needed:
+                        # Use deterministic random if salt is provided
+                        if salt is not None:
+                            stable_random = np.random.RandomState(get_integer_salt(salt))
+                            additional = stable_random.choice(available, needed, replace=False)
+                        else:
+                            additional = np.random.choice(available, needed, replace=False)
+                        splitted_groups[j] = np.append(splitted_groups[j], additional)
+                    else:
+                        splitted_groups[j] = np.append(splitted_groups[j], available)
+                elif len(splitted_groups[j]) > strat_group_sizes[j]:
+                    splitted_groups[j] = splitted_groups[j][:strat_group_sizes[j]]
         else:
             raise ValueError(f"Get incorrect split method {split_method}, choose one from {AVAILLABLE_SPLIT_METHODS}")
         for j in range(groups_number):
@@ -487,8 +597,9 @@ def get_split(
 
     for j in range(groups_number):
         group: np.ndarray = group_indices[j]
-        if group.shape[0] < groups_size:
-            required: int = groups_size - group.shape[0]
+        required_size = groups_sizes[j]
+        if group.shape[0] < required_size:
+            required: int = required_size - group.shape[0]
             new_elements: np.ndarray = add_to_required_size(dataframe, required, used_ids, salt)
             group_indices[j] = np.append(group_indices[j], new_elements)
             used_ids = np.append(used_ids, new_elements)

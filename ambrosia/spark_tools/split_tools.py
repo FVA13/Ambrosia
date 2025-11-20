@@ -12,7 +12,7 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-from typing import Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional, Union
 
 import ambrosia.spark_tools.stratification as strat_pkg
 from ambrosia import types
@@ -102,7 +102,7 @@ def add_to_required_size(
     dataframe: types.SparkDataFrame,
     used_dataframe: types.SparkDataFrame,
     id_column: types.ColumnNameType,
-    groups_size: int,
+    groups_size: Union[int, List[int]],
     current_sizes: List[int],
     labels: Iterable[str],
 ) -> types.SparkDataFrame:
@@ -110,8 +110,18 @@ def add_to_required_size(
     Add elements for groups to required size.
     """
     not_used_ids: types.SparkDataFrame = dataframe.join(used_dataframe, on=id_column, how="leftanti")
-    required_sizes: List[int] = [groups_size - size_ for size_ in current_sizes]
+    
+    # Handle both single size and list of sizes
+    if isinstance(groups_size, list):
+        required_sizes: List[int] = [groups_size[j] - current_sizes[j] for j in range(len(groups_size))]
+    else:
+        required_sizes: List[int] = [groups_size - size_ for size_ in current_sizes]
+    
     total_required: int = sum(required_sizes)
+    if total_required <= 0:
+        # Return empty dataframe with same schema
+        return dataframe.limit(0).withColumn(GROUPS_COLUMN, spark_funcs.lit(None).cast("string"))
+    
     not_used_ids = not_used_ids.limit(total_required)
 
     # Now it's linear search, probably there will be not so many groups
@@ -140,7 +150,8 @@ def get_split(
     dataframe: types.SparkDataFrame,
     split_method: str,
     id_column: types.ColumnNameType,
-    groups_size: int,
+    groups_size: Optional[int] = None,
+    groups_sizes: Optional[List[int]] = None,
     groups_number: int = 2,
     # later group_b_indices: types.SparkDataFrame = None,
     strat_columns: Optional[List] = None,
@@ -153,7 +164,18 @@ def get_split(
     """
     total_size: int = dataframe.count()
 
-    if groups_number * groups_size > total_size:
+    # Determine group sizes
+    if groups_sizes is not None:
+        groups_number = len(groups_sizes)
+        if groups_size is not None:
+            import warnings
+            warnings.warn("groups_size is ignored when groups_sizes is provided")
+    elif groups_size is None:
+        raise ValueError("Either groups_size or groups_sizes must be provided")
+    else:
+        groups_sizes = [groups_size] * groups_number
+
+    if sum(groups_sizes) > total_size:
         raise ValueError("Total sample size is more, than shape of table")
 
     if total_size > dataframe.dropDuplicates([id_column]).count():
@@ -164,33 +186,47 @@ def get_split(
 
     stratification = strat_pkg.Stratification()
     stratification.fit(dataframe, strat_columns)
-    strat_sizes = stratification.get_group_sizes(groups_size)
+    
+    # Calculate strat sizes for each group
+    strat_sizes_dict: Dict[int, Dict] = {}
+    for group_idx in range(groups_number):
+        strat_sizes_dict[group_idx] = stratification.get_group_sizes(groups_sizes[group_idx])
+    
     tables_on_stratification = []
 
     # List of sizes for each group, better to make without calling to cluster
     current_sizes: List[int] = [0] * groups_number
 
     for strat_value, strat_table in stratification.groups():
-        current_size: int = strat_sizes[strat_value]
+        # For Spark, we'll use the minimum size per stratification group
+        # and adjust later (similar to pandas approach)
+        strat_group_sizes = [strat_sizes_dict[j][strat_value] for j in range(groups_number)]
+        min_size = min(strat_group_sizes)
+        
         if split_method == "hash":
             current_table = get_hash_split(
                 strat_table,
                 id_column,
-                current_size,
+                min_size,
                 labels,
                 groups_number,
                 hash_function,
                 salt,
             )
+            # Note: Spark hash split creates equal-sized groups
+            # We'll need to adjust sizes in add_to_required_size
         else:
             raise ValueError("Split method is not found")
         tables_on_stratification.append(current_table)
         for j in range(groups_number):
-            current_sizes[j] += current_size
+            current_sizes[j] += min_size
 
     # Unite dataframes from each stratification group
     used_ids: types.SparkDataFrame = unite_spark_tables(*tables_on_stratification)
+    
+    # Update add_to_required_size to handle different group sizes
+    # Pass groups_sizes as a list to add_to_required_size
     additional_table: types.SparkDataFrame = add_to_required_size(
-        dataframe, used_ids, id_column, groups_size, current_sizes, labels
+        dataframe, used_ids, id_column, groups_sizes, current_sizes, labels
     )
     return unite_spark_tables(used_ids, additional_table)
