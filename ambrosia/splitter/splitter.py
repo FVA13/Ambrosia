@@ -358,6 +358,9 @@ class Splitter(yaml.YAMLObject, ABToolAbstract, metaclass=ABMetaClass):
                 groups_sizes[-1] += diff
             chosen_args["groups_sizes"] = groups_sizes
             chosen_args["groups_number"] = groups_number
+            # Remove groups_proportions as it's not accepted by get_split()
+            if "groups_proportions" in chosen_args:
+                del chosen_args["groups_proportions"]
         elif part_of_table is not None:
             split_part: float = part_of_table if (part_of_table <= SPLITTING_BOUND_CONST) else 1 - part_of_table
             chosen_args["groups_size"] = round(split_part * data_shape(chosen_args["dataframe"]))
