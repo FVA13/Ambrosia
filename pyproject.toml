@@ -1,6 +1,6 @@
 [project]
 name = "Ambrosia"
-version = "0.4.4"
+version = "0.4.5"
 description = "A Python library for working with A/B tests."
 readme = "README.rst"
 license = { text = "Apache-2.0" }
